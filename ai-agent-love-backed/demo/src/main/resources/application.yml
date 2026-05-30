@@ -1,0 +1,54 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  application:
+    name: spring-ai-alibaba-qwq-chat-client-example
+
+
+  datasource:
+      url: jdbc:mysql://localhost:3306/ai_agent_love
+      username: root
+      password: 83811312h
+  ai:
+    dashscope:
+      api-key: sk-e679cc4edf3a4e30b60c6234334cb89c
+    chat:
+      options:
+        model: qwen-plus
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        dimensions: 1536
+        distance-type: COSINE_DISTANCE
+        max-document-batch-size: 10000 # Optional: Maximum number of documents per batch
+
+server:
+  port: 8123
+  servlet:
+    context-path: /api
+# springdoc-openapi
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor: debug
+mybatis-plus:
+    mapper-locations: classpath:generator/mapper/*.xml
+    configuration:
+      map-underscore-to-camel-case: false
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+# searchApi
+search-api:
+  api-key: Qk41XafG3fMDvDn8ZzheMZxn
+
+

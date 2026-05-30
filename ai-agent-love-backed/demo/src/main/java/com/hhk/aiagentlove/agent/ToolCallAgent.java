@@ -1,0 +1,414 @@
+package com.hhk.aiagentlove.agent;
+
+import cn.hutool.core.collection.CollUtil;
+import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
+import com.hhk.aiagentlove.agent.model.AgentState;
+import com.hhk.aiagentlove.constant.FileConstant;
+import com.hhk.aiagentlove.tools.PDFGenerationTool;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingManager;
+import org.springframework.ai.model.tool.ToolExecutionResult;
+import org.springframework.ai.tool.ToolCallback;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@EqualsAndHashCode(callSuper = true)
+@Data
+@Slf4j
+public class ToolCallAgent extends ReActAgent {
+
+    private static final int MAX_SAME_TOOL_REPEAT = 2;
+
+    private final ToolCallback[] toolCallbacks;
+    private ChatResponse toolCallResponse;
+    private final ToolCallingManager toolCallingManager;
+    private final ChatOptions chatOptions;
+
+    private String lastToolSignature = "";
+    private int sameToolRepeatCount = 0;
+    private int searchWebCount = 0;
+    private boolean pdfRequested = false;
+    private boolean pdfGenerated = false;
+
+    public ToolCallAgent(ToolCallback[] toolCallbacks) {
+        this.toolCallbacks = toolCallbacks;
+        this.toolCallingManager = ToolCallingManager.builder().build();
+        this.chatOptions = DashScopeChatOptions.builder()
+                .withProxyToolCalls(true)
+                .build();
+    }
+
+    protected String buildSystemPrompt() {
+        StringBuilder sb = new StringBuilder();
+        if (getSystemPrompt() != null && !getSystemPrompt().isBlank()) {
+            sb.append(getSystemPrompt().trim());
+        }
+        if (getNextPrompt() != null && !getNextPrompt().isBlank()) {
+            if (!sb.isEmpty()) {
+                sb.append("\n\n");
+            }
+            sb.append(getNextPrompt().trim());
+        }
+        return sb.toString();
+    }
+
+    private static String truncateForLog(String text, int maxLen) {
+        if (text == null) {
+            return "";
+        }
+        String oneLine = text.replaceAll("\\s+", " ");
+        return oneLine.length() <= maxLen ? oneLine : oneLine.substring(0, maxLen) + "...";
+    }
+
+    private void detectUserIntent() {
+        pdfRequested = getMessageList().stream()
+                .filter(UserMessage.class::isInstance)
+                .map(m -> ((UserMessage) m).getText())
+                .anyMatch(text -> text != null && (
+                        text.toLowerCase().contains("pdf")
+                                || text.contains("PDF")
+                                || text.contains("文档")));
+    }
+
+    private String buildToolSignature(List<AssistantMessage.ToolCall> toolCalls) {
+        return toolCalls.stream()
+                .map(tc -> tc.name() + ":" + tc.arguments())
+                .sorted()
+                .collect(Collectors.joining("|"));
+    }
+
+    private void updateRepeatCounter(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls.isEmpty()) {
+            return;
+        }
+        String sig = buildToolSignature(toolCalls);
+        if (sig.equals(lastToolSignature)) {
+            sameToolRepeatCount++;
+        } else {
+            sameToolRepeatCount = 1;
+            lastToolSignature = sig;
+        }
+    }
+
+    private boolean isRepeatedSearchOnly(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls.isEmpty()) {
+            return false;
+        }
+        boolean allSearch = toolCalls.stream().allMatch(tc -> "searchWeb".equals(tc.name()));
+        return allSearch && sameToolRepeatCount >= MAX_SAME_TOOL_REPEAT;
+    }
+
+    /** 搜索已完成但模型反复 searchWeb 或即将耗尽步数时，强制汇总并生成 PDF */
+    protected String forceFinalizeWithPdf() {
+        log.info("强制结束：生成最终回答{}",
+                pdfRequested && !pdfGenerated ? "并创建 PDF" : "");
+
+        String summary = generateFinalAnswer();
+        if (!pdfRequested) {
+            return summary;
+        }
+        if (pdfGenerated) {
+            return summary;
+        }
+
+        String fileName = buildPdfFileName();
+        PDFGenerationTool pdfTool = new PDFGenerationTool();
+        String pdfResult = pdfTool.generatePDF(fileName, summary);
+        pdfGenerated = true;
+        return summary + formatPdfSection(pdfResult);
+    }
+
+    /** 拼接 PDF 绝对路径说明（仅磁盘路径，不用 /api 相对地址） */
+    private String formatPdfSection(String pathOrToolOutput) {
+        String path = extractAbsolutePath(pathOrToolOutput);
+        if (path == null || path.isBlank()) {
+            return "";
+        }
+        return "\n\n---\n✅ PDF 文件已保存，绝对路径：\n" + path;
+    }
+
+    private String extractAbsolutePath(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String text = raw.trim();
+        if (text.contains(":\\") && text.toLowerCase().contains(".pdf")) {
+            int pdfIdx = text.toLowerCase().indexOf(".pdf");
+            if (pdfIdx > 0) {
+                int start = text.lastIndexOf(':', pdfIdx);
+                start = text.lastIndexOf('\n', start);
+                if (start < 0) {
+                    start = 0;
+                } else {
+                    start++;
+                }
+                return text.substring(start, pdfIdx + 4).trim();
+            }
+            return text;
+        }
+        int idx = text.indexOf("绝对路径：");
+        if (idx >= 0) {
+            return text.substring(idx + "绝对路径：".length()).split("[；;\\n]")[0].trim();
+        }
+        return text;
+    }
+
+    private boolean shouldForceFinalizeNow(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls.isEmpty()) {
+            return false;
+        }
+        updateRepeatCounter(toolCalls);
+
+        if (isRepeatedSearchOnly(toolCalls) && searchWebCount >= 1) {
+            return true;
+        }
+        if (pdfRequested && searchWebCount >= 1 && !pdfGenerated && getCurrentStep() >= getMaxSteps() - 2) {
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public boolean think() {
+        detectUserIntent();
+
+        try {
+            ChatResponse chatResponse = getChatClient().prompt()
+                    .messages(getMessageList())
+                    .system(buildSystemPrompt())
+                    .options(chatOptions)
+                    .tools(toolCallbacks)
+                    .call()
+                    .chatResponse();
+
+            this.toolCallResponse = chatResponse;
+            AssistantMessage assistantMessage = chatResponse.getResult().getOutput();
+            String text = assistantMessage.getText() != null ? assistantMessage.getText() : "";
+
+            var toolCallList = assistantMessage.getToolCalls();
+            log.info("{} 的思考: {}", getName(), text);
+            log.info("{} 选择了 {} 个工具", getName(), toolCallList.size());
+
+            if (!toolCallList.isEmpty()) {
+                log.info(toolCallList.stream()
+                        .map(tc -> String.format("工具名称：%s，参数：%s", tc.name(), tc.arguments()))
+                        .collect(Collectors.joining("\n")));
+
+                if (shouldForceFinalizeNow(toolCallList)) {
+                    log.warn("检测到重复 searchWeb 或步数即将耗尽，强制生成 PDF 并结束");
+                    lastStepAnswer = forceFinalizeWithPdf();
+                    setAgentState(AgentState.FINISHED);
+                    return false;
+                }
+
+                if (!text.isBlank()) {
+                    lastStepAnswer = text;
+                }
+                getMessageList().add(assistantMessage);
+                return true;
+            }
+
+            getMessageList().add(assistantMessage);
+            if (pdfRequested && !pdfGenerated && searchWebCount >= 1) {
+                lastStepAnswer = forceFinalizeWithPdf();
+            } else {
+                lastStepAnswer = text.isBlank() ? "（模型未返回文本）" : text;
+            }
+            setAgentState(AgentState.FINISHED);
+            return false;
+
+        } catch (Exception e) {
+            log.error("think 失败", e);
+            String err = "处理时遇到错误：" + e.getMessage();
+            getMessageList().add(new AssistantMessage(err));
+            lastStepAnswer = err;
+            setAgentState(AgentState.FINISHED);
+            return false;
+        }
+    }
+
+    @Override
+    public String act() {
+        if (toolCallResponse == null || !toolCallResponse.hasToolCalls()) {
+            setAgentState(AgentState.FINISHED);
+            return "没有工具调用";
+        }
+
+        Prompt prompt = new Prompt(getMessageList(), chatOptions);
+        ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallResponse);
+        setMessageList(toolExecutionResult.conversationHistory());
+
+        ToolResponseMessage toolResponseMessage =
+                (ToolResponseMessage) CollUtil.getLast(toolExecutionResult.conversationHistory());
+
+        for (var response : toolResponseMessage.getResponses()) {
+            if ("searchWeb".equals(response.name())) {
+                searchWebCount++;
+            }
+            if ("generatePDF".equals(response.name())) {
+                pdfGenerated = true;
+            }
+        }
+
+        String toolSummary = toolResponseMessage.getResponses().stream()
+                .map(response -> response.name() + " → " + truncateForLog(response.responseData(), 300))
+                .collect(Collectors.joining(" | "));
+
+        boolean terminateToolCalled = toolResponseMessage.getResponses().stream()
+                .anyMatch(response -> "doTerminate".equals(response.name()));
+
+        if (terminateToolCalled) {
+            setAgentState(AgentState.FINISHED);
+            String pdfInfo = toolResponseMessage.getResponses().stream()
+                    .filter(r -> "generatePDF".equals(r.name()))
+                    .map(ToolResponseMessage.ToolResponse::responseData)
+                    .findFirst()
+                    .orElse(null);
+
+            StringBuilder answer = new StringBuilder();
+            if (lastStepAnswer != null && !lastStepAnswer.isBlank()) {
+                answer.append(lastStepAnswer);
+            } else {
+                answer.append(generateFinalAnswer());
+            }
+            if (pdfInfo != null && !pdfInfo.isBlank() && answer.indexOf(pdfInfo) < 0) {
+                answer.append(formatPdfSection(pdfInfo));
+            }
+            return answer.toString();
+        }
+
+        if (pdfGenerated && pdfRequested) {
+            String pdfPath = toolResponseMessage.getResponses().stream()
+                    .filter(r -> "generatePDF".equals(r.name()))
+                    .map(ToolResponseMessage.ToolResponse::responseData)
+                    .findFirst()
+                    .orElse("");
+            lastStepAnswer = generateFinalAnswer() + formatPdfSection(pdfPath);
+            setAgentState(AgentState.FINISHED);
+            return lastStepAnswer;
+        }
+
+        log.info("工具执行完成: {}", toolSummary);
+        return null;
+    }
+
+    /**
+     * 根据对话内容生成 PDF 关键词，并拼接固定目录的绝对路径。
+     * 目录：{aigent-love}/demo/tmp/pdf/
+     */
+    private String buildPdfAbsolutePath() {
+        String keyword = generatePdfKeywordFromChat();
+        String fileName = keyword + "_" + System.currentTimeMillis() + ".pdf";
+        return FileConstant.PDF_SAVE_DIR + java.io.File.separator + fileName;
+    }
+
+    private String buildPdfFileName() {
+        String path = buildPdfAbsolutePath();
+        return new java.io.File(path).getName();
+    }
+
+    /** 调用模型根据用户对话生成英文文件名关键词 */
+    private String generatePdfKeywordFromChat() {
+        String userText = getMessageList().stream()
+                .filter(UserMessage.class::isInstance)
+                .map(m -> ((UserMessage) m).getText())
+                .filter(t -> t != null && !t.isBlank())
+                .collect(Collectors.joining("\n"));
+
+        if (userText.isBlank()) {
+            return "report";
+        }
+
+        try {
+            ChatResponse response = getChatClient().prompt()
+                    .system("""
+                            根据用户对话，生成一个简短的英文 PDF 文件名关键词。
+                            要求：仅小写字母、数字、下划线，长度 3~24，不要 .pdf 后缀。
+                            只输出关键词本身，不要解释、不要标点。
+                            示例：beijing_dating, japan_street_view, shanghai_date_spots
+                            """)
+                    .user(userText)
+                    .options(chatOptions)
+                    .call()
+                    .chatResponse();
+
+            String keyword = response.getResult().getOutput().getText();
+            keyword = sanitizePdfKeyword(keyword);
+            log.info("对话生成 PDF 关键词: {}", keyword);
+            return keyword;
+        } catch (Exception e) {
+            log.warn("对话生成 PDF 关键词失败，使用默认 report", e);
+            return "report";
+        }
+    }
+
+    private String sanitizePdfKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return "report";
+        }
+        String cleaned = keyword.trim()
+                .toLowerCase()
+                .replaceAll("[^a-z0-9_]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+        if (cleaned.isBlank()) {
+            return "report";
+        }
+        return cleaned.length() > 24 ? cleaned.substring(0, 24) : cleaned;
+    }
+
+    private String generateFinalAnswer() {
+        try {
+            String finalSystem = buildSystemPrompt()
+                    + "\n\n【重要】请根据以上对话与工具执行结果，直接向用户输出完整、清晰的中文最终回答。"
+                    + "若用户需要地点列表，请输出 10 条，格式：序号、名称、地址/亮点。"
+                    + "若 generatePDF 工具已返回 Windows 绝对路径（如 C:\\...\\tmp\\pdf\\xxx.pdf），必须在文末原样写出该绝对路径，禁止使用 /api/files/pdf/ 相对地址。"
+                    + "禁止调用任何工具。";
+            ChatResponse response = getChatClient().prompt()
+                    .messages(getMessageList())
+                    .system(finalSystem)
+                    .options(chatOptions)
+                    .call()
+                    .chatResponse();
+            String text = response.getResult().getOutput().getText();
+            if (text != null && !text.isBlank()) {
+                getMessageList().add(response.getResult().getOutput());
+                return text;
+            }
+        } catch (Exception e) {
+            log.error("生成最终回答失败", e);
+        }
+        return "任务已结束。";
+    }
+
+    @Override
+    public void cleanup() {
+        lastToolSignature = "";
+        sameToolRepeatCount = 0;
+        searchWebCount = 0;
+        pdfRequested = false;
+        pdfGenerated = false;
+    }
+
+    /** 步数用尽时的兜底 */
+    public String tryFinalizeOnMaxSteps() {
+        if (getAgentState() == AgentState.FINISHED) {
+            return null;
+        }
+        setAgentState(AgentState.FINISHED);
+        if (searchWebCount > 0 || !getMessageList().isEmpty()) {
+            return forceFinalizeWithPdf();
+        }
+        return null;
+    }
+}

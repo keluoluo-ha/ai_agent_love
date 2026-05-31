@@ -23,7 +23,9 @@ public abstract class ReActAgent extends BaseAgent {
             lastStepAnswer = null;
             boolean shouldAct = think();
             if (!shouldAct) {
-                setAgentState(AgentState.FINISHED);
+                if (getAgentState() != AgentState.WAITING_FOR_HUMAN) {
+                    setAgentState(AgentState.FINISHED);
+                }
                 return (lastStepAnswer != null && !lastStepAnswer.isEmpty())
                         ? lastStepAnswer
                         : "思考完成。";

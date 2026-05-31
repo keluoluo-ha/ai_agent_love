@@ -2,9 +2,11 @@ package com.hhk.aiagentlove.tools;
 
 import cn.hutool.core.io.FileUtil;
 import com.hhk.aiagentlove.constant.FileConstant;
+import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.font.PdfFontFactory.EmbeddingStrategy;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.layout.Document;
@@ -15,6 +17,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class PDFGenerationTool {
@@ -31,6 +34,7 @@ public class PDFGenerationTool {
 
         String safeName = normalizeFileName(fileName);
         String filePath = FileConstant.PDF_SAVE_DIR + File.separator + safeName;
+        String pdfContent = sanitizeForPdf(content);
 
         try {
             FileUtil.mkdir(FileConstant.PDF_SAVE_DIR);
@@ -40,7 +44,7 @@ public class PDFGenerationTool {
                  PdfDocument pdf = new PdfDocument(writer);
                  Document document = new Document(pdf)) {
                 document.setFont(font);
-                for (String line : content.split("\\n")) {
+                for (String line : pdfContent.split("\\n")) {
                     document.add(new Paragraph(line.isBlank() ? " " : line));
                 }
             }
@@ -78,6 +82,23 @@ public class PDFGenerationTool {
     }
 
     private PdfFont createPdfFont() throws IOException {
+        String[] windowsFontCandidates = {
+                "C:/Windows/Fonts/msyh.ttc,0",
+                "C:/Windows/Fonts/msyhbd.ttc,0",
+                "C:/Windows/Fonts/simsun.ttc,0",
+                "C:/Windows/Fonts/simhei.ttf"
+        };
+        for (String fontPath : windowsFontCandidates) {
+            String filePart = fontPath.split(",")[0];
+            if (new File(filePart).exists()) {
+                try {
+                    return PdfFontFactory.createFont(fontPath, PdfEncodings.IDENTITY_H, EmbeddingStrategy.PREFER_EMBEDDED);
+                } catch (Exception e) {
+                    log.warn("加载字体失败 {}: {}", fontPath, e.getMessage());
+                }
+            }
+        }
+
         try {
             return PdfFontFactory.createFont("STSongStd-Light", "UniGB-UCS2-H");
         } catch (Exception e1) {
@@ -89,5 +110,22 @@ public class PDFGenerationTool {
                 return PdfFontFactory.createFont(StandardFonts.HELVETICA);
             }
         }
+    }
+
+    /**
+     * 去除 emoji 等非 BMP 字符，避免 UniGB/宋体编码报错。
+     */
+    private String sanitizeForPdf(String content) {
+        String normalized = content
+                .replace("✅", "[完成]")
+                .replace("❌", "[失败]")
+                .replace("🤔", "")
+                .replace("📄", "")
+                .replace("---", "——");
+
+        return normalized.codePoints()
+                .filter(cp -> cp <= 0xFFFF && cp != 0xFFFE && cp != 0xFFFF)
+                .mapToObj(cp -> String.valueOf(Character.toChars(cp)))
+                .collect(Collectors.joining());
     }
 }

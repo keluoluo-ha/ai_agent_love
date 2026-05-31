@@ -78,6 +78,9 @@ public class ToolCallAgent extends ReActAgent {
         return oneLine.length() <= maxLen ? oneLine : oneLine.substring(0, maxLen) + "...";
     }
 
+    /**
+     * 通过遍历消息列表来判断用户是否想要生成 PDF 文档
+     */
     private void detectUserIntent() {
         pdfRequested = getMessageList().stream()
                 .filter(UserMessage.class::isInstance)
@@ -171,6 +174,11 @@ public class ToolCallAgent extends ReActAgent {
         return text;
     }
 
+    /**
+     * 判断是否需要强制结束
+     * @param toolCalls
+     * @return
+     */
     private boolean shouldForceFinalizeNow(List<AssistantMessage.ToolCall> toolCalls) {
         if (toolCalls.isEmpty()) {
             return false;
@@ -188,6 +196,8 @@ public class ToolCallAgent extends ReActAgent {
 
     @Override
     public boolean think() {
+
+        //遍历是否需要文档
         detectUserIntent();
 
         try {
@@ -229,6 +239,13 @@ public class ToolCallAgent extends ReActAgent {
             getMessageList().add(assistantMessage);
             if (pdfRequested && !pdfGenerated && searchWebCount >= 1) {
                 lastStepAnswer = forceFinalizeWithPdf();
+            } else if (shouldPauseForHumanInput(text)) {
+                AskHumanRequest fallbackRequest = buildAskHumanFromAssistantText(text);
+                this.pendingAskHuman = fallbackRequest;
+                setAgentState(AgentState.WAITING_FOR_HUMAN);
+                lastStepAnswer = text;
+                log.warn("{} 未调用 askHuman 工具但在文本中向用户提问，已自动转为 AskHuman 暂停", getName());
+                return false;
             } else {
                 lastStepAnswer = text.isBlank() ? "（模型未返回文本）" : text;
             }
@@ -261,10 +278,11 @@ public class ToolCallAgent extends ReActAgent {
             return ASK_HUMAN_MARKER;
         }
 
+        //生成提示词
         Prompt prompt = new Prompt(getMessageList(), chatOptions);
+
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallResponse);
         setMessageList(toolExecutionResult.conversationHistory());
-
         ToolResponseMessage toolResponseMessage =
                 (ToolResponseMessage) CollUtil.getLast(toolExecutionResult.conversationHistory());
 
@@ -319,6 +337,67 @@ public class ToolCallAgent extends ReActAgent {
         return null;
     }
 
+    /**
+     * 模型未调用 askHuman 工具，但在文本里向用户提问时，自动转为交互式暂停。
+     */
+    private boolean shouldPauseForHumanInput(String assistantText) {
+        if (assistantText == null || assistantText.isBlank() || pdfRequested) {
+            return false;
+        }
+        long questionMarks = assistantText.chars()
+                .filter(ch -> ch == '？' || ch == '?')
+                .count();
+        boolean hasAskPhrases = containsAny(assistantText,
+                "需要了解", "请告诉我", "请问", "能否告诉", "关键信息",
+                "请提供", "请补充", "还不清楚", "还没想好", "为了给您", "为了给你",
+                "我需要知道", "麻烦您", "麻烦你", "想确认");
+        boolean hasNumberedQuestions = assistantText.matches("(?s).*\\d+[.、．][^\\n]{0,80}[？?].*");
+        boolean userMissingInfo = userIndicatesMissingInfo();
+
+        if (questionMarks >= 2) {
+            return true;
+        }
+        if (hasNumberedQuestions && questionMarks >= 1) {
+            return true;
+        }
+        return hasAskPhrases && questionMarks >= 1 && userMissingInfo;
+    }
+
+    private boolean userIndicatesMissingInfo() {
+        return getMessageList().stream()
+                .filter(UserMessage.class::isInstance)
+                .map(message -> ((UserMessage) message).getText())
+                .filter(text -> text != null && !text.isBlank())
+                .anyMatch(text -> containsAny(text,
+                        "还没想好", "没想好", "不确定", "不知道", "待定", "还没定", "没定"));
+    }
+
+    private AskHumanRequest buildAskHumanFromAssistantText(String assistantText) {
+        AskHumanRequest request = new AskHumanRequest();
+        request.setToolCallId("fallback-ask-" + System.currentTimeMillis());
+        request.setQuestion(extractQuestionFromAssistantText(assistantText));
+        request.setReason("需要您补充信息后才能继续完成任务");
+        return request;
+    }
+
+    private String extractQuestionFromAssistantText(String assistantText) {
+        String trimmed = assistantText.trim();
+        int firstBreak = trimmed.indexOf('\n');
+        if (firstBreak > 0 && firstBreak < 120) {
+            return trimmed.substring(0, firstBreak).trim();
+        }
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) + "..." : trimmed;
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void injectHumanResponse(String userAnswer) {
         if (pendingAskHuman == null) {
             return;
@@ -367,6 +446,11 @@ public class ToolCallAgent extends ReActAgent {
         pdfGenerated = state.isPdfGenerated();
     }
 
+    /**
+     * 判断是否需要询问人类
+     * @param toolCalls
+     * @return
+     */
     private AskHumanRequest extractAskHumanRequest(List<AssistantMessage.ToolCall> toolCalls) {
         for (AssistantMessage.ToolCall toolCall : toolCalls) {
             if (!"askHuman".equals(toolCall.name())) {

@@ -16,6 +16,11 @@ public enum AgentState {
     RUNNING,
 
     /**
+     * 等待用户输入（AskHuman 触发）
+     */
+    WAITING_FOR_HUMAN,
+
+    /**
      * 已完成状态
      */
     FINISHED,

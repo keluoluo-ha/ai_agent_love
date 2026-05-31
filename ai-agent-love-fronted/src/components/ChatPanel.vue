@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref } from 'vue'
-import type { StreamConnection } from '../api/chat'
+import type { AskHumanPayload, StreamConnection } from '../api/chat'
 
 interface ChatMessage {
   id: string
@@ -12,6 +12,8 @@ const props = defineProps<{
   title: string
   placeholder: string
   chatId?: string
+  askHumanBanner?: AskHumanPayload | null
+  allowEmptyAssistant?: boolean
   sendMessage: (
     message: string,
     onChunk: (chunk: string) => void,
@@ -84,7 +86,7 @@ function submitMessage() {
       isSending.value = false
       activeSource = null
       const targetMessage = messages.value[assistantMessageIndex]
-      if (!targetMessage || !targetMessage.text.trim()) {
+      if ((!targetMessage || !targetMessage.text.trim()) && !props.allowEmptyAssistant) {
         errorText.value = '暂未收到有效回复，请稍后重试。'
       }
     },
@@ -96,6 +98,10 @@ function handleInputEnter(event: KeyboardEvent) {
     event.preventDefault()
     submitMessage()
   }
+}
+
+function applyAskHumanOption(option: string) {
+  inputText.value = option
 }
 
 onBeforeUnmount(() => {
@@ -116,6 +122,32 @@ onBeforeUnmount(() => {
     </a-layout-header>
 
     <a-layout-content class="chat-content">
+      <a-alert
+        v-if="askHumanBanner"
+        type="warning"
+        class="ask-human-banner"
+        :show-icon="true"
+      >
+        <template #title>智能体需要你补充信息</template>
+        <a-space direction="vertical" :size="8" fill>
+          <a-typography-text>{{ askHumanBanner.question }}</a-typography-text>
+          <a-typography-text v-if="askHumanBanner.reason" type="secondary">
+            原因：{{ askHumanBanner.reason }}
+          </a-typography-text>
+          <a-space v-if="askHumanBanner.options?.length" wrap>
+            <a-tag
+              v-for="option in askHumanBanner.options"
+              :key="option"
+              color="arcoblue"
+              class="ask-human-option"
+              @click="applyAskHumanOption(option)"
+            >
+              {{ option }}
+            </a-tag>
+          </a-space>
+        </a-space>
+      </a-alert>
+
       <a-card class="chat-list-card" :body-style="{ padding: '16px' }">
         <section ref="chatListRef" class="chat-list">
           <a-empty v-if="messages.length === 0" class="chat-empty">
@@ -165,7 +197,7 @@ onBeforeUnmount(() => {
       <a-textarea
         v-model="inputText"
         class="chat-input"
-        :placeholder="placeholder"
+        :placeholder="askHumanBanner ? '请回答上面的问题以继续任务...' : placeholder"
         :disabled="isSending"
         :auto-size="{ minRows: 1, maxRows: 4 }"
         allow-clear

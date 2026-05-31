@@ -1,8 +1,12 @@
 package com.hhk.aiagentlove.agent;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
+import com.hhk.aiagentlove.agent.model.AgentRunState;
 import com.hhk.aiagentlove.agent.model.AgentState;
+import com.hhk.aiagentlove.agent.model.AskHumanRequest;
 import com.hhk.aiagentlove.constant.FileConstant;
 import com.hhk.aiagentlove.tools.PDFGenerationTool;
 import lombok.Data;
@@ -19,6 +23,8 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -28,6 +34,7 @@ import java.util.stream.Collectors;
 public class ToolCallAgent extends ReActAgent {
 
     private static final int MAX_SAME_TOOL_REPEAT = 2;
+    public static final String ASK_HUMAN_MARKER = "__ASK_HUMAN__";
 
     private final ToolCallback[] toolCallbacks;
     private ChatResponse toolCallResponse;
@@ -39,6 +46,7 @@ public class ToolCallAgent extends ReActAgent {
     private int searchWebCount = 0;
     private boolean pdfRequested = false;
     private boolean pdfGenerated = false;
+    private AskHumanRequest pendingAskHuman;
 
     public ToolCallAgent(ToolCallback[] toolCallbacks) {
         this.toolCallbacks = toolCallbacks;
@@ -244,6 +252,15 @@ public class ToolCallAgent extends ReActAgent {
             return "没有工具调用";
         }
 
+        List<AssistantMessage.ToolCall> toolCalls = toolCallResponse.getResult().getOutput().getToolCalls();
+        AskHumanRequest askHumanRequest = extractAskHumanRequest(toolCalls);
+        if (askHumanRequest != null) {
+            this.pendingAskHuman = askHumanRequest;
+            setAgentState(AgentState.WAITING_FOR_HUMAN);
+            log.info("AskHuman 触发，等待用户输入: {}", askHumanRequest.getQuestion());
+            return ASK_HUMAN_MARKER;
+        }
+
         Prompt prompt = new Prompt(getMessageList(), chatOptions);
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallResponse);
         setMessageList(toolExecutionResult.conversationHistory());
@@ -299,6 +316,76 @@ public class ToolCallAgent extends ReActAgent {
         }
 
         log.info("工具执行完成: {}", toolSummary);
+        return null;
+    }
+
+    public void injectHumanResponse(String userAnswer) {
+        if (pendingAskHuman == null) {
+            return;
+        }
+        ToolResponseMessage toolResponseMessage = new ToolResponseMessage(List.of(
+                new ToolResponseMessage.ToolResponse(
+                        pendingAskHuman.getToolCallId(),
+                        "askHuman",
+                        "用户回答：" + userAnswer
+                )
+        ));
+        getMessageList().add(toolResponseMessage);
+        pendingAskHuman = null;
+        setAgentState(AgentState.RUNNING);
+    }
+
+    public AgentRunState snapshot(String runId, String chatId) {
+        AgentRunState state = new AgentRunState();
+        state.setRunId(runId);
+        state.setChatId(chatId);
+        state.setAgentState(getAgentState());
+        state.setCurrentStep(getCurrentStep());
+        state.setMaxSteps(getMaxSteps());
+        state.setMessageList(new ArrayList<>(getMessageList()));
+        state.setPendingAskHuman(pendingAskHuman);
+        state.setLastStepAnswer(lastStepAnswer);
+        state.setLastToolSignature(lastToolSignature);
+        state.setSameToolRepeatCount(sameToolRepeatCount);
+        state.setSearchWebCount(searchWebCount);
+        state.setPdfRequested(pdfRequested);
+        state.setPdfGenerated(pdfGenerated);
+        return state;
+    }
+
+    public void restore(AgentRunState state) {
+        setAgentState(state.getAgentState());
+        setCurrentStep(state.getCurrentStep());
+        setMaxSteps(state.getMaxSteps());
+        setMessageList(new ArrayList<>(state.getMessageList()));
+        pendingAskHuman = state.getPendingAskHuman();
+        lastStepAnswer = state.getLastStepAnswer();
+        lastToolSignature = state.getLastToolSignature();
+        sameToolRepeatCount = state.getSameToolRepeatCount();
+        searchWebCount = state.getSearchWebCount();
+        pdfRequested = state.isPdfRequested();
+        pdfGenerated = state.isPdfGenerated();
+    }
+
+    private AskHumanRequest extractAskHumanRequest(List<AssistantMessage.ToolCall> toolCalls) {
+        for (AssistantMessage.ToolCall toolCall : toolCalls) {
+            if (!"askHuman".equals(toolCall.name())) {
+                continue;
+            }
+            AskHumanRequest request = new AskHumanRequest();
+            request.setToolCallId(toolCall.id());
+            JSONObject args = JSONUtil.parseObj(toolCall.arguments());
+            request.setQuestion(args.getStr("question", "请补充更多信息以便我继续完成任务。"));
+            request.setReason(args.getStr("reason"));
+            String optionsRaw = args.getStr("options");
+            if (optionsRaw != null && !optionsRaw.isBlank()) {
+                request.setOptions(Arrays.stream(optionsRaw.split("[,，;；]"))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList()));
+            }
+            return request;
+        }
         return null;
     }
 
@@ -398,6 +485,7 @@ public class ToolCallAgent extends ReActAgent {
         searchWebCount = 0;
         pdfRequested = false;
         pdfGenerated = false;
+        pendingAskHuman = null;
     }
 
     /** 步数用尽时的兜底 */

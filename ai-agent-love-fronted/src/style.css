@@ -205,6 +205,14 @@ body {
   flex: 1;
 }
 
+.ask-human-banner {
+  border-radius: 12px;
+}
+
+.ask-human-option {
+  cursor: pointer;
+}
+
 .chat-list-card {
   flex: 1;
   min-height: 0;

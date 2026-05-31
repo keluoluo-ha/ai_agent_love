@@ -27,6 +27,8 @@ public class YuManus extends ToolCallAgent{
                 4. Reply in clear Chinese with numbered lists. Do NOT paste raw JSON.
                 5. When done, write the full answer in message text, then call doTerminate.
                 6. generatePDF tool returns ONLY a disk absolute path (e.g. C:\\Users\\...\\aigent-love\\tmp\\pdf\\report_xxx.pdf). You MUST copy that exact path for the user. Never use /api/files/pdf/ relative URLs.
+                7. When key information is missing, ambiguous, or needs user confirmation before an irreversible action, call askHuman with a clear Chinese question. Do NOT ask for information already provided.
+                8. After askHuman returns the user's answer, continue the task with that information.
                 """;
         this.setSystemPrompt(SYSTEM_PROMPT);
         this.setNextPrompt(NEXT_STEP_PROMPT);

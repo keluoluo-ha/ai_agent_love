@@ -1,0 +1,242 @@
+[
+  {
+    "id": "single-01",
+    "question": "我还是单身，怎么提升个人魅力才能更吸引喜欢的人？",
+    "status": "单身",
+    "topic": "提升魅力",
+    "goldKeywords": ["提升自身魅力", "外在形象", "内在修养"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-02",
+    "question": "单身男生形象不好、比较内向，有什么具体办法改善？",
+    "status": "单身",
+    "topic": "提升魅力",
+    "goldKeywords": ["学习穿搭", "读书俱乐部", "开朗自信"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-03",
+    "question": "参加聚会时我看到心仪的人，应该怎么主动搭话？",
+    "status": "单身",
+    "topic": "社交结识",
+    "goldKeywords": ["社交场合", "主动寻找话题", "倾听对方回应"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-04",
+    "question": "行业交流会上怎么自然地和异性开启对话？",
+    "status": "单身",
+    "topic": "社交结识",
+    "goldKeywords": ["行业交流会", "交换联系方式", "展现亲和力"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-05",
+    "question": "网上相亲软件聊天，有哪些技巧能提高脱单成功率？",
+    "status": "单身",
+    "topic": "线上交友",
+    "goldKeywords": ["线上交友", "个人资料", "保护个人隐私"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-06",
+    "question": "线上认识对象时，资料和个人隐私应该怎么把握？",
+    "status": "单身",
+    "topic": "线上交友",
+    "goldKeywords": ["完善真实", "聊天频率", "不要随意透露"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-07",
+    "question": "单身久了很焦虑，总担心找不到对象怎么办？",
+    "status": "单身",
+    "topic": "克服焦虑",
+    "goldKeywords": ["焦虑情绪", "丰富自己的生活", "情绪管理"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-08",
+    "question": "我对恋爱很恐惧，一想到脱单就紧张，怎么调节？",
+    "status": "单身",
+    "topic": "克服焦虑",
+    "goldKeywords": ["恋爱过程恐惧", "培养摄影爱好", "亲朋好友交流"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-09",
+    "question": "相亲见了几面，怎么判断这个人值不值得继续交往？",
+    "status": "单身",
+    "topic": "相亲判断",
+    "goldKeywords": ["相亲对象", "价值观", "人生规划"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "single-10",
+    "question": "第一次相亲要注意观察对方哪些方面？",
+    "status": "单身",
+    "topic": "相亲判断",
+    "goldKeywords": ["言行举止", "情绪稳定性", "尊重他人"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-01",
+    "question": "我和女朋友经常吵架，吵完不知道怎么收场，怎么办？",
+    "status": "恋爱",
+    "topic": "处理争吵",
+    "goldKeywords": ["冷静情绪", "真诚倾听", "我觉得"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-02",
+    "question": "情侣发生争执时，有哪些沟通方式能避免越吵越凶？",
+    "status": "恋爱",
+    "topic": "处理争吵",
+    "goldKeywords": ["争吵发生时", "沟通方式", "解决方案"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-03",
+    "question": "想给对象制造浪漫惊喜，有什么实用建议？",
+    "status": "恋爱",
+    "topic": "制造惊喜",
+    "goldKeywords": ["浪漫惊喜", "了解对方喜好", "星空露营"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-04",
+    "question": "恋爱中怎样安排约会更有仪式感？",
+    "status": "恋爱",
+    "topic": "制造惊喜",
+    "goldKeywords": ["策划一场特别约会", "手写情书", "主题派对"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-05",
+    "question": "谈恋爱后我越来越依赖对方，怎么保持独立？",
+    "status": "恋爱",
+    "topic": "保持自我",
+    "goldKeywords": ["保持自我", "独立兴趣爱好", "社交圈子"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-06",
+    "question": "恋爱里如何平衡陪伴对方和自己的个人生活？",
+    "status": "恋爱",
+    "topic": "保持自我",
+    "goldKeywords": ["过度依赖", "个人目标", "舞蹈爱好"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-07",
+    "question": "我和男友对未来规划不一致，怎么好好谈这个问题？",
+    "status": "恋爱",
+    "topic": "未来规划",
+    "goldKeywords": ["未来规划", "事业发展", "共同目标"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-08",
+    "question": "如何在恋爱中和对方有效沟通未来规划？",
+    "status": "恋爱",
+    "topic": "未来规划",
+    "goldKeywords": ["心平气和开启话题", "攒钱买房", "阶段性计划"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-09",
+    "question": "对象熬夜打游戏影响相处，我该怎么开口说？",
+    "status": "恋爱",
+    "topic": "缺点沟通",
+    "goldKeywords": ["熬夜打游戏", "关心的口吻", "作息时间表"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "love-10",
+    "question": "发现恋人有小缺点，怎么说才不会伤感情？",
+    "status": "恋爱",
+    "topic": "缺点沟通",
+    "goldKeywords": ["巧妙沟通", "具体描述缺点", "建设性意见"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-01",
+    "question": "结婚后工作太忙，怎么兼顾家庭和事业？",
+    "status": "已婚",
+    "topic": "工作家庭平衡",
+    "goldKeywords": ["平衡工作", "家务分工", "日程表"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-02",
+    "question": "婚后总是加班，陪家人时间不够怎么办？",
+    "status": "已婚",
+    "topic": "工作家庭平衡",
+    "goldKeywords": ["减少不必要加班", "陪伴家人", "家庭活动"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-03",
+    "question": "结婚几年感觉感情淡了，怎么维护亲密关系？",
+    "status": "已婚",
+    "topic": "维护亲密",
+    "goldKeywords": ["亲密关系", "二人世界", "身体亲密接触"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-04",
+    "question": "婚后夫妻怎样保持像以前恋爱时一样甜蜜？",
+    "status": "已婚",
+    "topic": "维护亲密",
+    "goldKeywords": ["每周一次", "纪念日礼物", "分享日常喜怒哀乐"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-05",
+    "question": "我和婆婆关系紧张，老公夹在中间，怎么处理？",
+    "status": "已婚",
+    "topic": "家庭矛盾",
+    "goldKeywords": ["伴侣家人", "婆媳产生矛盾", "温和语气"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-06",
+    "question": "婚后和对方家里人闹矛盾，怎样才能妥善解决？",
+    "status": "已婚",
+    "topic": "家庭矛盾",
+    "goldKeywords": ["倾听伴侣家人", "矛盾根源", "寻求伴侣帮助"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-07",
+    "question": "结婚后整天忙家务带孩子，感觉丢了自我，怎么办？",
+    "status": "已婚",
+    "topic": "自我成长",
+    "goldKeywords": ["保持自我成长", "学习新技能", "碎片化时间"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-08",
+    "question": "婚后还想转行学习新东西，怎么争取伴侣支持？",
+    "status": "已婚",
+    "topic": "自我成长",
+    "goldKeywords": ["个人成长目标", "争取其支持", "学习编程"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-09",
+    "question": "夫妻消费观念差很多，怎么一起做好理财规划？",
+    "status": "已婚",
+    "topic": "理财协调",
+    "goldKeywords": ["消费观念", "家庭预算", "共同储蓄目标"],
+    "minKeywordMatches": 1
+  },
+  {
+    "id": "married-10",
+    "question": "婚后一方爱花钱一方很节省，如何协调财务？",
+    "status": "已婚",
+    "topic": "理财协调",
+    "goldKeywords": ["理财规划", "开诚布公", "大额消费共同商议"],
+    "minKeywordMatches": 1
+  }
+]

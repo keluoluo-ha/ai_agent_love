@@ -1,16 +1,15 @@
 package com.hhk.aiagentlove.controller;
 
-import com.hhk.aiagentlove.agent.YuManus;
 import com.hhk.aiagentlove.app.LoveApp;
+import com.hhk.aiagentlove.agent.model.AgentRunResult;
+import com.hhk.aiagentlove.services.InteractiveAgentService;
 import jakarta.annotation.Resource;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
@@ -22,11 +21,9 @@ import java.io.IOException;
 public class Aicontroller {
 
     @Resource
-    private ToolCallback[] allTools;
+    public LoveApp loveApp;
     @Resource
-    public ChatModel dashscopeChatModel;
-    @Resource
-    public LoveApp  loveApp;
+    private InteractiveAgentService interactiveAgentService;
 
     /**
      * 第一种写法
@@ -90,10 +87,25 @@ public class Aicontroller {
         return emitter;
     }
 
+    @GetMapping("/manus/chat/sync")
+    public AgentRunResult doChatWithManusSync(
+            String message,
+            String chatId,
+            String runId,
+            String replyType) {
+        if ("AGENT_REPLY".equalsIgnoreCase(replyType) && runId != null && !runId.isBlank()) {
+            return interactiveAgentService.resume(runId, message);
+        }
+        return interactiveAgentService.start(message, chatId);
+    }
+
     @GetMapping("/manus/chat")
-    public SseEmitter doChatWithManus(String message){
-        YuManus manus = new YuManus(allTools,dashscopeChatModel);
-        return manus.run(message);
+    public SseEmitter doChatWithManus(
+            String message,
+            String chatId,
+            String runId,
+            String replyType) {
+        return interactiveAgentService.startSse(message, chatId, runId, replyType);
     }
 
 

@@ -56,143 +56,6 @@ public class ToolCallAgent extends ReActAgent {
                 .build();
     }
 
-    protected String buildSystemPrompt() {
-        StringBuilder sb = new StringBuilder();
-        if (getSystemPrompt() != null && !getSystemPrompt().isBlank()) {
-            sb.append(getSystemPrompt().trim());
-        }
-        if (getNextPrompt() != null && !getNextPrompt().isBlank()) {
-            if (!sb.isEmpty()) {
-                sb.append("\n\n");
-            }
-            sb.append(getNextPrompt().trim());
-        }
-        return sb.toString();
-    }
-
-    private static String truncateForLog(String text, int maxLen) {
-        if (text == null) {
-            return "";
-        }
-        String oneLine = text.replaceAll("\\s+", " ");
-        return oneLine.length() <= maxLen ? oneLine : oneLine.substring(0, maxLen) + "...";
-    }
-
-    /**
-     * 通过遍历消息列表来判断用户是否想要生成 PDF 文档
-     */
-    private void detectUserIntent() {
-        pdfRequested = getMessageList().stream()
-                .filter(UserMessage.class::isInstance)
-                .map(m -> ((UserMessage) m).getText())
-                .anyMatch(text -> text != null && (
-                        text.toLowerCase().contains("pdf")
-                                || text.contains("PDF")
-                                || text.contains("文档")));
-    }
-
-    private String buildToolSignature(List<AssistantMessage.ToolCall> toolCalls) {
-        return toolCalls.stream()
-                .map(tc -> tc.name() + ":" + tc.arguments())
-                .sorted()
-                .collect(Collectors.joining("|"));
-    }
-
-    private void updateRepeatCounter(List<AssistantMessage.ToolCall> toolCalls) {
-        if (toolCalls.isEmpty()) {
-            return;
-        }
-        String sig = buildToolSignature(toolCalls);
-        if (sig.equals(lastToolSignature)) {
-            sameToolRepeatCount++;
-        } else {
-            sameToolRepeatCount = 1;
-            lastToolSignature = sig;
-        }
-    }
-
-    private boolean isRepeatedSearchOnly(List<AssistantMessage.ToolCall> toolCalls) {
-        if (toolCalls.isEmpty()) {
-            return false;
-        }
-        boolean allSearch = toolCalls.stream().allMatch(tc -> "searchWeb".equals(tc.name()));
-        return allSearch && sameToolRepeatCount >= MAX_SAME_TOOL_REPEAT;
-    }
-
-    /** 搜索已完成但模型反复 searchWeb 或即将耗尽步数时，强制汇总并生成 PDF */
-    protected String forceFinalizeWithPdf() {
-        log.info("强制结束：生成最终回答{}",
-                pdfRequested && !pdfGenerated ? "并创建 PDF" : "");
-
-        String summary = generateFinalAnswer();
-        if (!pdfRequested) {
-            return summary;
-        }
-        if (pdfGenerated) {
-            return summary;
-        }
-
-        String fileName = buildPdfFileName();
-        PDFGenerationTool pdfTool = new PDFGenerationTool();
-        String pdfResult = pdfTool.generatePDF(fileName, summary);
-        pdfGenerated = true;
-        return summary + formatPdfSection(pdfResult);
-    }
-
-    /** 拼接 PDF 绝对路径说明（仅磁盘路径，不用 /api 相对地址） */
-    private String formatPdfSection(String pathOrToolOutput) {
-        String path = extractAbsolutePath(pathOrToolOutput);
-        if (path == null || path.isBlank()) {
-            return "";
-        }
-        return "\n\n---\n✅ PDF 文件已保存，绝对路径：\n" + path;
-    }
-
-    private String extractAbsolutePath(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return "";
-        }
-        String text = raw.trim();
-        if (text.contains(":\\") && text.toLowerCase().contains(".pdf")) {
-            int pdfIdx = text.toLowerCase().indexOf(".pdf");
-            if (pdfIdx > 0) {
-                int start = text.lastIndexOf(':', pdfIdx);
-                start = text.lastIndexOf('\n', start);
-                if (start < 0) {
-                    start = 0;
-                } else {
-                    start++;
-                }
-                return text.substring(start, pdfIdx + 4).trim();
-            }
-            return text;
-        }
-        int idx = text.indexOf("绝对路径：");
-        if (idx >= 0) {
-            return text.substring(idx + "绝对路径：".length()).split("[；;\\n]")[0].trim();
-        }
-        return text;
-    }
-
-    /**
-     * 判断是否需要强制结束
-     * @param toolCalls
-     * @return
-     */
-    private boolean shouldForceFinalizeNow(List<AssistantMessage.ToolCall> toolCalls) {
-        if (toolCalls.isEmpty()) {
-            return false;
-        }
-        updateRepeatCounter(toolCalls);
-
-        if (isRepeatedSearchOnly(toolCalls) && searchWebCount >= 1) {
-            return true;
-        }
-        if (pdfRequested && searchWebCount >= 1 && !pdfGenerated && getCurrentStep() >= getMaxSteps() - 2) {
-            return true;
-        }
-        return false;
-    }
 
     @Override
     public boolean think() {
@@ -337,117 +200,178 @@ public class ToolCallAgent extends ReActAgent {
         return null;
     }
 
+
+    @Override
+    public void cleanup() {
+        lastToolSignature = "";
+        sameToolRepeatCount = 0;
+        searchWebCount = 0;
+        pdfRequested = false;
+        pdfGenerated = false;
+        pendingAskHuman = null;
+    }
+
+
     /**
-     * 模型未调用 askHuman 工具，但在文本里向用户提问时，自动转为交互式暂停。
+     * 把 SystemPrompt（你是谁）和 NextPrompt（工作规则）拼接成一个完整提示词发给 LLM
+     * @return
      */
-    private boolean shouldPauseForHumanInput(String assistantText) {
-        if (assistantText == null || assistantText.isBlank() || pdfRequested) {
+    protected String buildSystemPrompt() {
+        StringBuilder sb = new StringBuilder();
+        if (getSystemPrompt() != null && !getSystemPrompt().isBlank()) {
+            sb.append(getSystemPrompt().trim());
+        }
+        if (getNextPrompt() != null && !getNextPrompt().isBlank()) {
+            if (!sb.isEmpty()) {
+                sb.append("\n\n");
+            }
+            sb.append(getNextPrompt().trim());
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 通过遍历消息列表来判断用户是否想要生成 PDF 文档
+     */
+    private void detectUserIntent() {
+        pdfRequested = getMessageList().stream()
+                .filter(UserMessage.class::isInstance)
+                .map(m -> ((UserMessage) m).getText())
+                .anyMatch(text -> text != null && (
+                        text.toLowerCase().contains("pdf")
+                                || text.contains("PDF")
+                                || text.contains("文档")));
+    }
+
+
+
+    /**
+     * 给工具调用生成指纹：`"searchWeb:{query参数}
+     * @param toolCalls
+     * @return
+     */
+    private String buildToolSignature(List<AssistantMessage.ToolCall> toolCalls) {
+        return toolCalls.stream()
+                .map(tc -> tc.name() + ":" + tc.arguments())
+                .sorted()
+                .collect(Collectors.joining("|"));
+    }
+
+    /**
+     * 当前工具签名和上次一样 → 计数+1；不一样 → 重置为 1
+     * @param toolCalls
+     */
+    private void updateRepeatCounter(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls.isEmpty()) {
+            return;
+        }
+        String sig = buildToolSignature(toolCalls);
+        if (sig.equals(lastToolSignature)) {
+            sameToolRepeatCount++;
+        } else {
+            sameToolRepeatCount = 1;
+            lastToolSignature = sig;
+        }
+    }
+
+    /**
+     * 判断是否全是 searchWeb 且重复次数 >= 2（防止模型无限搜）
+     * @param toolCalls
+     * @return
+     */
+    private boolean isRepeatedSearchOnly(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls.isEmpty()) {
             return false;
         }
-        long questionMarks = assistantText.chars()
-                .filter(ch -> ch == '？' || ch == '?')
-                .count();
-        boolean hasAskPhrases = containsAny(assistantText,
-                "需要了解", "请告诉我", "请问", "能否告诉", "关键信息",
-                "请提供", "请补充", "还不清楚", "还没想好", "为了给您", "为了给你",
-                "我需要知道", "麻烦您", "麻烦你", "想确认");
-        boolean hasNumberedQuestions = assistantText.matches("(?s).*\\d+[.、．][^\\n]{0,80}[？?].*");
-        boolean userMissingInfo = userIndicatesMissingInfo();
+        boolean allSearch = toolCalls.stream().allMatch(tc -> "searchWeb".equals(tc.name()));
+        return allSearch && sameToolRepeatCount >= MAX_SAME_TOOL_REPEAT;
+    }
 
-        if (questionMarks >= 2) {
+    /**
+     * 	综合判断：重复搜索 ≥2 次 或 PDF 场景下步数快用完 → 强制结束
+     * @param toolCalls
+     * @return
+     */
+    private boolean shouldForceFinalizeNow(List<AssistantMessage.ToolCall> toolCalls) {
+        if (toolCalls.isEmpty()) {
+            return false;
+        }
+        updateRepeatCounter(toolCalls);
+
+        if (isRepeatedSearchOnly(toolCalls) && searchWebCount >= 1) {
             return true;
         }
-        if (hasNumberedQuestions && questionMarks >= 1) {
+        if (pdfRequested && searchWebCount >= 1 && !pdfGenerated && getCurrentStep() >= getMaxSteps() - 2) {
             return true;
-        }
-        return hasAskPhrases && questionMarks >= 1 && userMissingInfo;
-    }
-
-    private boolean userIndicatesMissingInfo() {
-        return getMessageList().stream()
-                .filter(UserMessage.class::isInstance)
-                .map(message -> ((UserMessage) message).getText())
-                .filter(text -> text != null && !text.isBlank())
-                .anyMatch(text -> containsAny(text,
-                        "还没想好", "没想好", "不确定", "不知道", "待定", "还没定", "没定"));
-    }
-
-    private AskHumanRequest buildAskHumanFromAssistantText(String assistantText) {
-        AskHumanRequest request = new AskHumanRequest();
-        request.setToolCallId("fallback-ask-" + System.currentTimeMillis());
-        request.setQuestion(extractQuestionFromAssistantText(assistantText));
-        request.setReason("需要您补充信息后才能继续完成任务");
-        return request;
-    }
-
-    private String extractQuestionFromAssistantText(String assistantText) {
-        String trimmed = assistantText.trim();
-        int firstBreak = trimmed.indexOf('\n');
-        if (firstBreak > 0 && firstBreak < 120) {
-            return trimmed.substring(0, firstBreak).trim();
-        }
-        return trimmed.length() > 200 ? trimmed.substring(0, 200) + "..." : trimmed;
-    }
-
-    private boolean containsAny(String text, String... keywords) {
-        for (String keyword : keywords) {
-            if (text.contains(keyword)) {
-                return true;
-            }
         }
         return false;
     }
 
-    public void injectHumanResponse(String userAnswer) {
-        if (pendingAskHuman == null) {
-            return;
+
+    /** 搜索已完成但模型反复 searchWeb 或即将耗尽步数时，强制汇总并生成 PDF */
+    protected String forceFinalizeWithPdf() {
+        log.info("强制结束：生成最终回答{}",
+                pdfRequested && !pdfGenerated ? "并创建 PDF" : "");
+
+        String summary = generateFinalAnswer();
+        if (!pdfRequested) {
+            return summary;
         }
-        ToolResponseMessage toolResponseMessage = new ToolResponseMessage(List.of(
-                new ToolResponseMessage.ToolResponse(
-                        pendingAskHuman.getToolCallId(),
-                        "askHuman",
-                        "用户回答：" + userAnswer
-                )
-        ));
-        getMessageList().add(toolResponseMessage);
-        pendingAskHuman = null;
-        setAgentState(AgentState.RUNNING);
+        if (pdfGenerated) {
+            return summary;
+        }
+
+        String fileName = buildPdfFileName();
+        PDFGenerationTool pdfTool = new PDFGenerationTool();
+        String pdfResult = pdfTool.generatePDF(fileName, summary);
+        pdfGenerated = true;
+        return summary + formatPdfSection(pdfResult);
     }
 
-    public AgentRunState snapshot(String runId, String chatId) {
-        AgentRunState state = new AgentRunState();
-        state.setRunId(runId);
-        state.setChatId(chatId);
-        state.setAgentState(getAgentState());
-        state.setCurrentStep(getCurrentStep());
-        state.setMaxSteps(getMaxSteps());
-        state.setMessageList(new ArrayList<>(getMessageList()));
-        state.setPendingAskHuman(pendingAskHuman);
-        state.setLastStepAnswer(lastStepAnswer);
-        state.setLastToolSignature(lastToolSignature);
-        state.setSameToolRepeatCount(sameToolRepeatCount);
-        state.setSearchWebCount(searchWebCount);
-        state.setPdfRequested(pdfRequested);
-        state.setPdfGenerated(pdfGenerated);
-        return state;
-    }
 
-    public void restore(AgentRunState state) {
-        setAgentState(state.getAgentState());
-        setCurrentStep(state.getCurrentStep());
-        setMaxSteps(state.getMaxSteps());
-        setMessageList(new ArrayList<>(state.getMessageList()));
-        pendingAskHuman = state.getPendingAskHuman();
-        lastStepAnswer = state.getLastStepAnswer();
-        lastToolSignature = state.getLastToolSignature();
-        sameToolRepeatCount = state.getSameToolRepeatCount();
-        searchWebCount = state.getSearchWebCount();
-        pdfRequested = state.isPdfRequested();
-        pdfGenerated = state.isPdfGenerated();
+    /** 步数用尽时的兜底 */
+    public String tryFinalizeOnMaxSteps() {
+        if (getAgentState() == AgentState.FINISHED) {
+            return null;
+        }
+        setAgentState(AgentState.FINISHED);
+        if (searchWebCount > 0 || !getMessageList().isEmpty()) {
+            return forceFinalizeWithPdf();
+        }
+        return null;
     }
 
     /**
-     * 判断是否需要询问人类
+     * 用完整对话历史调用一次 LLM，要求输出中文最终回答（禁止调工具）
+     * @return
+     */
+    private String generateFinalAnswer() {
+        try {
+            String finalSystem = buildSystemPrompt()
+                    + "\n\n【重要】请根据以上对话与工具执行结果，直接向用户输出完整、清晰的中文最终回答。"
+                    + "若用户需要地点列表，请输出 10 条，格式：序号、名称、地址/亮点。"
+                    + "若 generatePDF 工具已返回 Windows 绝对路径（如 C:\\...\\tmp\\pdf\\xxx.pdf），必须在文末原样写出该绝对路径，禁止使用 /api/files/pdf/ 相对地址。"
+                    + "禁止调用任何工具。";
+            ChatResponse response = getChatClient().prompt()
+                    .messages(getMessageList())
+                    .system(finalSystem)
+                    .options(chatOptions)
+                    .call()
+                    .chatResponse();
+            String text = response.getResult().getOutput().getText();
+            if (text != null && !text.isBlank()) {
+                getMessageList().add(response.getResult().getOutput());
+                return text;
+            }
+        } catch (Exception e) {
+            log.error("生成最终回答失败", e);
+        }
+        return "任务已结束。";
+    }
+
+
+    /**
+     * 从 LLM 返回的 toolCalls 中找出 askHuman 工具，解析 question / reason / options
      * @param toolCalls
      * @return
      */
@@ -474,6 +398,153 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     /**
+     * 模型未调用 askHuman 工具，但在文本里向用户提问时，自动转为交互式暂停。
+     */
+    private boolean shouldPauseForHumanInput(String assistantText) {
+        if (assistantText == null || assistantText.isBlank() || pdfRequested) {
+            return false;
+        }
+        long questionMarks = assistantText.chars()
+                .filter(ch -> ch == '？' || ch == '?')
+                .count();
+        boolean hasAskPhrases = containsAny(assistantText,
+                "需要了解", "请告诉我", "请问", "能否告诉", "关键信息",
+                "请提供", "请补充", "还不清楚", "还没想好", "为了给您", "为了给你",
+                "我需要知道", "麻烦您", "麻烦你", "想确认");
+        boolean hasNumberedQuestions = assistantText.matches("(?s).*\\d+[.、．][^\\n]{0,80}[？?].*");
+        boolean userMissingInfo = userIndicatesMissingInfo();
+
+        if (questionMarks >= 2) {
+            return true;
+        }
+        if (hasNumberedQuestions && questionMarks >= 1) {
+            return true;
+        }
+        return hasAskPhrases && questionMarks >= 1 && userMissingInfo;
+    }
+
+    /**
+     * 	检测用户消息中是否有 "还没想好""不确定""待定" 等词
+     * @return
+     */
+    private boolean userIndicatesMissingInfo() {
+        return getMessageList().stream()
+                .filter(UserMessage.class::isInstance)
+                .map(message -> ((UserMessage) message).getText())
+                .filter(text -> text != null && !text.isBlank())
+                .anyMatch(text -> containsAny(text,
+                        "还没想好", "没想好", "不确定", "不知道", "待定", "还没定", "没定"));
+    }
+
+
+    /**
+     * 把 LLM 的文本提问包装成 AskHumanRequest
+     * @param assistantText
+     * @return
+     */
+    private AskHumanRequest buildAskHumanFromAssistantText(String assistantText) {
+        AskHumanRequest request = new AskHumanRequest();
+        request.setToolCallId("fallback-ask-" + System.currentTimeMillis());
+        request.setQuestion(extractQuestionFromAssistantText(assistantText));
+        request.setReason("需要您补充信息后才能继续完成任务");
+        return request;
+    }
+
+    /**
+     * 从 LLM 文本中提取第一行作为问题
+     * @param assistantText
+     * @return
+     */
+    private String extractQuestionFromAssistantText(String assistantText) {
+        String trimmed = assistantText.trim();
+        int firstBreak = trimmed.indexOf('\n');
+        if (firstBreak > 0 && firstBreak < 120) {
+            return trimmed.substring(0, firstBreak).trim();
+        }
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) + "..." : trimmed;
+    }
+
+    /**
+     * 工具方法：字符串是否包含任一关键词
+     * @param text
+     * @param keywords
+     * @return
+     */
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    /**
+     * 	把用户回答包装成 ToolResponseMessage(name="askHuman") 插入消息列表，恢复 RUNNING 状态
+     * @param userAnswer
+     */
+    public void injectHumanResponse(String userAnswer) {
+        if (pendingAskHuman == null) {
+            return;
+        }
+        ToolResponseMessage toolResponseMessage = new ToolResponseMessage(List.of(
+                new ToolResponseMessage.ToolResponse(
+                        pendingAskHuman.getToolCallId(),
+                        "askHuman",
+                        "用户回答：" + userAnswer
+                )
+        ));
+        getMessageList().add(toolResponseMessage);
+        pendingAskHuman = null;
+        setAgentState(AgentState.RUNNING);
+    }
+
+
+    /**
+     * 	把当前 agent 全部状态（messageList、步数、计数器等）打包成 AgentRunState，用于暂停后恢复
+     * @param runId
+     * @param chatId
+     * @return
+     */
+    public AgentRunState snapshot(String runId, String chatId) {
+        AgentRunState state = new AgentRunState();
+        state.setRunId(runId);
+        state.setChatId(chatId);
+        state.setAgentState(getAgentState());
+        state.setCurrentStep(getCurrentStep());
+        state.setMaxSteps(getMaxSteps());
+        state.setMessageList(new ArrayList<>(getMessageList()));
+        state.setPendingAskHuman(pendingAskHuman);
+        state.setLastStepAnswer(lastStepAnswer);
+        state.setLastToolSignature(lastToolSignature);
+        state.setSameToolRepeatCount(sameToolRepeatCount);
+        state.setSearchWebCount(searchWebCount);
+        state.setPdfRequested(pdfRequested);
+        state.setPdfGenerated(pdfGenerated);
+        return state;
+    }
+
+    /**
+     * 从 AgentRunState 恢复所有状态
+     * @param state
+     */
+    public void restore(AgentRunState state) {
+        setAgentState(state.getAgentState());
+        setCurrentStep(state.getCurrentStep());
+        setMaxSteps(state.getMaxSteps());
+        setMessageList(new ArrayList<>(state.getMessageList()));
+        pendingAskHuman = state.getPendingAskHuman();
+        lastStepAnswer = state.getLastStepAnswer();
+        lastToolSignature = state.getLastToolSignature();
+        sameToolRepeatCount = state.getSameToolRepeatCount();
+        searchWebCount = state.getSearchWebCount();
+        pdfRequested = state.isPdfRequested();
+        pdfGenerated = state.isPdfGenerated();
+    }
+
+
+    /**
      * 根据对话内容生成 PDF 关键词，并拼接固定目录的绝对路径。
      * 目录：{aigent-love}/demo/tmp/pdf/
      */
@@ -483,10 +554,15 @@ public class ToolCallAgent extends ReActAgent {
         return FileConstant.PDF_SAVE_DIR + java.io.File.separator + fileName;
     }
 
+    /**
+     * 	生成 PDF 文件名
+     * @return
+     */
     private String buildPdfFileName() {
         String path = buildPdfAbsolutePath();
         return new java.io.File(path).getName();
     }
+
 
     /** 调用模型根据用户对话生成英文文件名关键词 */
     private String generatePdfKeywordFromChat() {
@@ -523,6 +599,20 @@ public class ToolCallAgent extends ReActAgent {
         }
     }
 
+    /** 拼接 PDF 绝对路径说明（仅磁盘路径，不用 /api 相对地址） */
+    private String formatPdfSection(String pathOrToolOutput) {
+        String path = extractAbsolutePath(pathOrToolOutput);
+        if (path == null || path.isBlank()) {
+            return "";
+        }
+        return "\n\n---\n✅ PDF 文件已保存，绝对路径：\n" + path;
+    }
+
+    /**
+     * 清洗关键词：去非法字符、截断到 24 字符
+     * @param keyword
+     * @return
+     */
     private String sanitizePdfKeyword(String keyword) {
         if (keyword == null || keyword.isBlank()) {
             return "report";
@@ -538,49 +628,55 @@ public class ToolCallAgent extends ReActAgent {
         return cleaned.length() > 24 ? cleaned.substring(0, 24) : cleaned;
     }
 
-    private String generateFinalAnswer() {
-        try {
-            String finalSystem = buildSystemPrompt()
-                    + "\n\n【重要】请根据以上对话与工具执行结果，直接向用户输出完整、清晰的中文最终回答。"
-                    + "若用户需要地点列表，请输出 10 条，格式：序号、名称、地址/亮点。"
-                    + "若 generatePDF 工具已返回 Windows 绝对路径（如 C:\\...\\tmp\\pdf\\xxx.pdf），必须在文末原样写出该绝对路径，禁止使用 /api/files/pdf/ 相对地址。"
-                    + "禁止调用任何工具。";
-            ChatResponse response = getChatClient().prompt()
-                    .messages(getMessageList())
-                    .system(finalSystem)
-                    .options(chatOptions)
-                    .call()
-                    .chatResponse();
-            String text = response.getResult().getOutput().getText();
-            if (text != null && !text.isBlank()) {
-                getMessageList().add(response.getResult().getOutput());
-                return text;
+    /**
+     * 从工具返回的文本中提取绝对路径
+     * @param raw
+     * @return
+     */
+    private String extractAbsolutePath(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String text = raw.trim();
+        if (text.contains(":\\") && text.toLowerCase().contains(".pdf")) {
+            int pdfIdx = text.toLowerCase().indexOf(".pdf");
+            if (pdfIdx > 0) {
+                int start = text.lastIndexOf(':', pdfIdx);
+                start = text.lastIndexOf('\n', start);
+                if (start < 0) {
+                    start = 0;
+                } else {
+                    start++;
+                }
+                return text.substring(start, pdfIdx + 4).trim();
             }
-        } catch (Exception e) {
-            log.error("生成最终回答失败", e);
+            return text;
         }
-        return "任务已结束。";
+        int idx = text.indexOf("绝对路径：");
+        if (idx >= 0) {
+            return text.substring(idx + "绝对路径：".length()).split("[；;\\n]")[0].trim();
+        }
+        return text;
     }
 
-    @Override
-    public void cleanup() {
-        lastToolSignature = "";
-        sameToolRepeatCount = 0;
-        searchWebCount = 0;
-        pdfRequested = false;
-        pdfGenerated = false;
-        pendingAskHuman = null;
+
+
+    /**
+     * 	日志截断（工具输出太长时）
+     * @param text
+     * @param maxLen
+     * @return
+     */
+    private static String truncateForLog(String text, int maxLen) {
+        if (text == null) {
+            return "";
+        }
+        String oneLine = text.replaceAll("\\s+", " ");
+        return oneLine.length() <= maxLen ? oneLine : oneLine.substring(0, maxLen) + "...";
     }
 
-    /** 步数用尽时的兜底 */
-    public String tryFinalizeOnMaxSteps() {
-        if (getAgentState() == AgentState.FINISHED) {
-            return null;
-        }
-        setAgentState(AgentState.FINISHED);
-        if (searchWebCount > 0 || !getMessageList().isEmpty()) {
-            return forceFinalizeWithPdf();
-        }
-        return null;
-    }
+
+
+
+
 }

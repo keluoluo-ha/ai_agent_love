@@ -33,14 +33,17 @@ public class YuManus {
     private AgentRunStateStore stateStore;
 
     public AgentRunResult start(String message, String chatId) {
-        String runId = newRunId();
-        String resolvedChatId = resolveChatId(chatId, runId);
+        //生成唯一 runId
+        String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
+        //如果前端没传id就用runId
+        String resolvedChatId = (chatId == null || chatId.isBlank()) ? runId : chatId;
 
         YuManusAgent agent = newAgent();
         agent.getMessageList().add(new UserMessage(message));
         return execute(agent, runId, resolvedChatId, null);
     }
 
+    //重置状态
     public AgentRunResult resume(String runId, String userAnswer) {
         AgentRunState state = stateStore.get(runId);
         if (state == null) {
@@ -55,6 +58,7 @@ public class YuManus {
 
         YuManusAgent agent = newAgent();
         agent.restore(state);
+        //	把用户回答包装成 ToolResponseMessage(name="askHuman") 插入消息列表，恢复 RUNNING 状态
         agent.injectHumanResponse(userAnswer);
         return execute(agent, runId, state.getChatId(), null);
     }
@@ -64,10 +68,11 @@ public class YuManus {
         CompletableFuture.runAsync(() -> {
             try {
                 if ("AGENT_REPLY".equalsIgnoreCase(replyType) && runId != null && !runId.isBlank()) {
-                    sendSseResult(emitter, resume(runId, message));
+                    AgentRunResult resume = resume(runId, message);
+                    sendSseResult(emitter, resume);
                 } else {
-                    String newRunId = newRunId();
-                    String resolvedChatId = resolveChatId(chatId, newRunId);
+                    String newRunId = "run_" + UUID.randomUUID().toString().replace("-", "");
+                    String resolvedChatId = (chatId == null || chatId.isBlank()) ? runId : chatId;
                     YuManusAgent agent = newAgent();
                     agent.getMessageList().add(new UserMessage(message));
                     execute(agent, newRunId, resolvedChatId, emitter);
@@ -81,7 +86,9 @@ public class YuManus {
 
     private AgentRunResult execute(YuManusAgent agent, String runId, String chatId, SseEmitter emitter) {
         try {
+            //开启react形式
             AgentStepLoopResult loopResult = agent.runStepLoop();
+
             return toRunResult(agent, runId, chatId, emitter, loopResult);
         } finally {
             if (agent.getAgentState() != AgentState.WAITING_FOR_HUMAN) {
@@ -98,9 +105,14 @@ public class YuManus {
             AgentStepLoopResult loopResult) {
         return switch (loopResult.getEndState()) {
             case WAITING_FOR_HUMAN -> {
+                //把当前 agent 全部状态（messageList、步数、计数器等）打包成 AgentRunState
                 AgentRunState state = agent.snapshot(runId, chatId);
+                //快照存到内存
                 stateStore.save(state);
+
+                //返回前端vo
                 AgentRunResult result = AgentRunResult.askHuman(runId, chatId, agent.getPendingAskHuman());
+
                 emitAskHuman(emitter, result);
                 yield result;
             }
@@ -129,19 +141,20 @@ public class YuManus {
         return new YuManusAgent(allTools, dashscopeChatModel);
     }
 
-    private String newRunId() {
-        return "run_" + UUID.randomUUID().toString().replace("-", "");
-    }
 
-    private String resolveChatId(String chatId, String runId) {
-        return (chatId == null || chatId.isBlank()) ? runId : chatId;
-    }
-
+    /**
+     * resume() 内部调 execute() 时传不进 emitter，
+     * 只能返回 AgentRunResult 对象，由这个方法负责把对象转成 SSE 事件推给前端。
+     * @param emitter
+     * @param result
+     */
     private void sendSseResult(SseEmitter emitter, AgentRunResult result) {
         try {
             switch (result.getType()) {
                 case AgentRunResult.TYPE_ASK_HUMAN -> {
+                    //需要人工介入了，请前端展示人工客服界面
                     emitter.send(SseEmitter.event().name("ask_human").data(buildAskHumanPayload(result)));
+                    //告诉前端：本次流程结束了
                     emitter.send(SseEmitter.event().name("done").data(Map.of("status", result.getStatus())));
                 }
                 case AgentRunResult.TYPE_FINAL -> {

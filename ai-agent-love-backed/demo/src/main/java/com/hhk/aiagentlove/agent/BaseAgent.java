@@ -33,7 +33,7 @@ public abstract class BaseAgent {
             agentState = AgentState.RUNNING;
 
             for (int i = currentStep; i < maxSteps; i++) {
-                if (agentState == AgentState.FINISHED || agentState == AgentState.WAITING_FOR_HUMAN) {
+                if (agentState == AgentState.FINISHED) {
                     break;
                 }
 
@@ -52,7 +52,9 @@ public abstract class BaseAgent {
                 }
             }
 
+            //达到最大步数（20步）还没完成的兜底逻辑。
             if (agentState != AgentState.FINISHED && this instanceof ToolCallAgent toolCallAgent) {
+                // 步数用尽时的兜底
                 String fallback = toolCallAgent.tryFinalizeOnMaxSteps();
                 if (fallback != null && !fallback.isBlank()) {
                     return AgentStepLoopResult.finished(fallback);

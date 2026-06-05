@@ -20,34 +20,49 @@ public enum RagEvalProfile {
             false,
             true,
             false,
-            0.73
+            0.3
     ),
     WITH_STATUS_FILTER(
             "Baseline-2 向量检索 + status 过滤",
             true,
             true,
             false,
-            0.73
+            0.3
     ),
     WITH_QUERY_EXPANSION(
             "Baseline-3 过滤 + Query 扩展",
             true,
             true,
             true,
-            0.73
+            0.3
     ),
     FULL(
             "Ours 完整 RAG 检索链路",
             true,
             true,
             true,
-            0.73
+            0.3
     );
 
+    /**
+     * 层级
+     */
     private final String label;
+    /**
+     * 是否支持status过滤
+     */
     private final boolean statusFilter;
+    /**
+     * 是否开启【相似度阈值过滤】
+     */
     private final boolean similarityThresholdEnabled;
+    /**
+     * 是否支持Query 扩展
+     */
     private final boolean queryExpansion;
+    /**
+     * 相似度阈值
+     */
     private final double similarityThreshold;
 
     RagEvalProfile(

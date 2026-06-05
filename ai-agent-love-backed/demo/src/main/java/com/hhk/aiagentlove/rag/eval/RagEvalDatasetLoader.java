@@ -11,7 +11,8 @@ import java.util.List;
 @Component
 public class RagEvalDatasetLoader {
 
-    private static final String DEFAULT_DATASET = "rag/rag-eval-dataset.json";
+    public static final String DEFAULT_DATASET = "rag/rag-eval-dataset.json";
+    public static final String HARD_DATASET = "rag/rag-eval-dataset-hard.json";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 

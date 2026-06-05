@@ -6,23 +6,20 @@
 
 ## 测试集
 
-- 文件：`src/test/resources/rag/rag-eval-dataset.json`
-- 规模：**30 条**（单身 / 恋爱 / 已婚 各 10 条）
-- 每条包含：
-  - `question`：口语化用户问题
-  - `status`：期望场景（与文档 metadata 一致）
-  - `goldKeywords`：标准文档块中应出现的关键词
-  - `minKeywordMatches`：至少命中几个关键词算正确（默认 1）
+| 文件 | 规模 | 用途 |
+|------|------|------|
+| `src/test/resources/rag/rag-eval-dataset.json` | 30 条 | 基础集 |
+| `src/test/resources/rag/rag-eval-dataset-hard.json` | 25 条 | **高区分度集**（推荐面试评测） |
 
 ## 对比配置
 
 | 配置 | 说明 |
 |------|------|
 | Baseline-0 | 纯向量检索 |
-| Baseline-1 | + 相似度阈值 0.73 |
+| Baseline-1 | + 相似度阈值 **0.50**（与 `RagEvalProfile` 一致） |
 | Baseline-2 | + status 多维过滤 |
 | Baseline-3 | + Query 扩展（3 路） |
-| Ours/FULL | 完整链路（与线上一致） |
+| Ours/FULL | 完整链路 |
 
 ## 指标
 
@@ -34,15 +31,19 @@
 
 ```bash
 cd ai-agent-love-backed/demo
-mvn -Dtest=RagRetrievalEvalTest test
+# 高区分度集（推荐）
+mvn "-Dtest=RagRetrievalEvalHardTest" test
+# 基础 30 条集
+mvn "-Dtest=RagRetrievalEvalTest" test
 ```
 
 > Query 扩展会调用 DashScope，请确保 API Key 已配置。
 
 ## 输出
 
-- `target/rag-eval/rag-eval-report.md` — 对比表 + 面试口述模板
-- `target/rag-eval/full-profile-detail.csv` — 完整方案逐条明细
+- `target/rag-eval/rag-eval-report-hard.md` — 高区分度集报告（25 条）
+- `target/rag-eval/rag-eval-report.md` — 基础集报告（30 条）
+- `target/rag-eval/full-profile-detail-hard.csv` — 高区分度逐条明细
 
 ## 你这次跑出来的真实结果（示例）
 

@@ -37,7 +37,7 @@ class RagRetrievalEvalTest {
         List<RagEvalMetricsResult> results = retrievalEvaluator.evaluateAllProfiles(dataset);
 
         Path reportPath = Path.of("target", "rag-eval", "rag-eval-report.md");
-        reportWriter.writeMarkdownReport(results, reportPath);
+        reportWriter.writeMarkdownReport(results, RagEvalReportContext.forDefaultDataset(dataset.size()), reportPath);
 
         RagEvalMetricsResult fullResult = results.stream()
                 .filter(r -> r.getProfile() == RagEvalProfile.FULL)

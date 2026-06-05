@@ -26,7 +26,7 @@ public class createLoveAppFactory
         DocumentRetriever retriever = VectorStoreDocumentRetriever.builder()
                 .vectorStore(vectorStore)
                 .filterExpression(expression)
-                .similarityThreshold(0.73)
+                .similarityThreshold(0.3)
                 .topK(5)
                 .build();
         return RetrievalAugmentationAdvisor.builder()

@@ -5,6 +5,9 @@ import lombok.Data;
 
 @Data
 @Builder
+/**
+ * 步进循环的内部返回值
+ */
 public class AgentStepLoopResult {
 
     private AgentState endState;

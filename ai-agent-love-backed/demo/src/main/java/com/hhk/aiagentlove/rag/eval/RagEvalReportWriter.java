@@ -14,13 +14,16 @@ import java.util.Locale;
 @Component
 public class RagEvalReportWriter {
 
-    public Path writeMarkdownReport(List<RagEvalMetricsResult> results, Path outputPath) throws IOException {
+    public Path writeMarkdownReport(
+            List<RagEvalMetricsResult> results,
+            RagEvalReportContext context,
+            Path outputPath) throws IOException {
         Files.createDirectories(outputPath.getParent());
-        Files.writeString(outputPath, buildMarkdown(results), StandardCharsets.UTF_8);
+        Files.writeString(outputPath, buildMarkdown(results, context), StandardCharsets.UTF_8);
         return outputPath;
     }
 
-    public String buildMarkdown(List<RagEvalMetricsResult> results) {
+    public String buildMarkdown(List<RagEvalMetricsResult> results, RagEvalReportContext context) {
         RagEvalMetricsResult baseline = results.stream()
                 .filter(r -> r.getProfile() == RagEvalProfile.BASELINE_RAW)
                 .findFirst()
@@ -29,7 +32,9 @@ public class RagEvalReportWriter {
         StringBuilder sb = new StringBuilder();
         sb.append("# RAG 检索评测报告\n\n");
         sb.append("- 生成时间: ").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
-        sb.append("- 测试集: `rag-eval-dataset.json`（30 条，含单身/恋爱/已婚各 10 条）\n");
+        sb.append("- 测试集: `src/test/resources/").append(context.getDatasetClasspath()).append("`（")
+                .append(context.getCaseCount()).append(" 条，").append(context.getDatasetDescription()).append("）\n");
+        sb.append("- 相似度阈值: ").append(String.format(Locale.US, "%.2f", context.getSimilarityThreshold())).append("\n");
         sb.append("- 指标: Hit@5、MRR@5、StatusAcc@1\n");
         sb.append("- 命中规则: Top5 中出现 **status 正确** 且包含 **goldKeywords** 的文档块\n\n");
 
@@ -55,7 +60,10 @@ public class RagEvalReportWriter {
         RagEvalMetricsResult thresholdBaseline = findProfile(results, RagEvalProfile.WITH_THRESHOLD);
         RagEvalMetricsResult rawBaseline = baseline;
 
-        sb.append("> 我们在 30 条标注测试集上做了检索层离线评测（Hit@5 / MRR@5 / StatusAcc@1）。\n\n");
+        sb.append(String.format(Locale.CHINA,
+                "> 我们在 %d 条标注测试集（`%s`）上做了检索层离线评测（Hit@5 / MRR@5 / StatusAcc@1）。\n\n",
+                context.getCaseCount(),
+                context.datasetFileName()));
 
         if (full != null && thresholdBaseline != null) {
             double absGain = (full.getHitAt5() - thresholdBaseline.getHitAt5()) * 100;
@@ -63,7 +71,8 @@ public class RagEvalReportWriter {
                     ? full.relativeImprovementPercent(thresholdBaseline)
                     : 0;
             sb.append(String.format(Locale.CHINA,
-                    "> **推荐对比基线**：在「向量检索 + 相似度阈值 0.73」下 Hit@5 为 %.1f%%；加入 status 过滤与 Query 扩展后提升到 %.1f%%（绝对提升 %.1f 个百分点，相对提升 %.1f%%）。\n\n",
+                    "> **推荐对比基线**：在「向量检索 + 相似度阈值 %.2f」下 Hit@5 为 %.1f%%；加入 status 过滤与 Query 扩展后提升到 %.1f%%（绝对提升 %.1f 个百分点，相对提升 %.1f%%）。\n\n",
+                    context.getSimilarityThreshold(),
                     thresholdBaseline.getHitAt5() * 100,
                     full.getHitAt5() * 100,
                     absGain,
@@ -72,11 +81,12 @@ public class RagEvalReportWriter {
 
         if (rawBaseline != null && full != null && full.getHitAt5() < rawBaseline.getHitAt5()) {
             sb.append(String.format(Locale.CHINA,
-                    "> **注意**：纯向量检索（无阈值）Hit@5 为 %.1f%%，高于完整方案。说明当前阈值可能偏高，会牺牲召回；面试中应强调「过滤噪声 vs 提升召回」的权衡，而不是只报单一提升比例。\n",
-                    rawBaseline.getHitAt5() * 100));
+                    "> **注意**：纯向量检索（无阈值）Hit@5 为 %.1f%%，高于完整方案。说明阈值 %.2f 仍会牺牲部分召回；面试中应强调「过滤噪声 vs 提升召回」的权衡。\n",
+                    rawBaseline.getHitAt5() * 100,
+                    context.getSimilarityThreshold()));
         }
 
-        sb.append("## 未命中样本（完整方案）\n\n");
+        sb.append("\n## 未命中样本（完整方案）\n\n");
         if (full != null) {
             List<RagEvalCaseResult> misses = full.getCaseResults().stream()
                     .filter(r -> !r.isHitAtK())

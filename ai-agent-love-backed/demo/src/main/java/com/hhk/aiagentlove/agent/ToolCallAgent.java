@@ -46,6 +46,7 @@ public class ToolCallAgent extends ReActAgent {
     private int searchWebCount = 0;
     private boolean pdfRequested = false;
     private boolean pdfGenerated = false;
+
     private AskHumanRequest pendingAskHuman;
 
     public ToolCallAgent(ToolCallback[] toolCallbacks) {
@@ -64,6 +65,7 @@ public class ToolCallAgent extends ReActAgent {
         detectUserIntent();
 
         try {
+
             ChatResponse chatResponse = getChatClient().prompt()
                     .messages(getMessageList())
                     .system(buildSystemPrompt())
@@ -80,11 +82,13 @@ public class ToolCallAgent extends ReActAgent {
             log.info("{} 的思考: {}", getName(), text);
             log.info("{} 选择了 {} 个工具", getName(), toolCallList.size());
 
+            //如果有选择的工具
             if (!toolCallList.isEmpty()) {
                 log.info(toolCallList.stream()
                         .map(tc -> String.format("工具名称：%s，参数：%s", tc.name(), tc.arguments()))
                         .collect(Collectors.joining("\n")));
 
+                //检测到重复 searchWeb 或步数即将耗尽
                 if (shouldForceFinalizeNow(toolCallList)) {
                     log.warn("检测到重复 searchWeb 或步数即将耗尽，强制生成 PDF 并结束");
                     lastStepAnswer = forceFinalizeWithPdf();
@@ -101,8 +105,12 @@ public class ToolCallAgent extends ReActAgent {
 
             getMessageList().add(assistantMessage);
             if (pdfRequested && !pdfGenerated && searchWebCount >= 1) {
+                //用完整对话历史调用一次 LLM，要求输出中文最终回答（禁止调工具）
                 lastStepAnswer = forceFinalizeWithPdf();
-            } else if (shouldPauseForHumanInput(text)) {
+            }
+            //如果需要人提供信息
+            else if (shouldPauseForHumanInput(text)) {
+                //把 LLM 的文本提问包装成 AskHumanRequest
                 AskHumanRequest fallbackRequest = buildAskHumanFromAssistantText(text);
                 this.pendingAskHuman = fallbackRequest;
                 setAgentState(AgentState.WAITING_FOR_HUMAN);
@@ -127,12 +135,14 @@ public class ToolCallAgent extends ReActAgent {
 
     @Override
     public String act() {
+
         if (toolCallResponse == null || !toolCallResponse.hasToolCalls()) {
             setAgentState(AgentState.FINISHED);
             return "没有工具调用";
         }
 
         List<AssistantMessage.ToolCall> toolCalls = toolCallResponse.getResult().getOutput().getToolCalls();
+        //从 LLM 返回的 toolCalls 中找出 askHuman 工具，解析 question / reason / options
         AskHumanRequest askHumanRequest = extractAskHumanRequest(toolCalls);
         if (askHumanRequest != null) {
             this.pendingAskHuman = askHumanRequest;
@@ -144,8 +154,11 @@ public class ToolCallAgent extends ReActAgent {
         //生成提示词
         Prompt prompt = new Prompt(getMessageList(), chatOptions);
 
+        //执行工具
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallResponse);
+
         setMessageList(toolExecutionResult.conversationHistory());
+
         ToolResponseMessage toolResponseMessage =
                 (ToolResponseMessage) CollUtil.getLast(toolExecutionResult.conversationHistory());
 
@@ -158,13 +171,16 @@ public class ToolCallAgent extends ReActAgent {
             }
         }
 
+        //把一次工具调用返回的多个工具结果，合并成一条短的日志字符串
         String toolSummary = toolResponseMessage.getResponses().stream()
+                //日志截断
                 .map(response -> response.name() + " → " + truncateForLog(response.responseData(), 300))
                 .collect(Collectors.joining(" | "));
 
         boolean terminateToolCalled = toolResponseMessage.getResponses().stream()
                 .anyMatch(response -> "doTerminate".equals(response.name()));
 
+        //如果任务结束
         if (terminateToolCalled) {
             setAgentState(AgentState.FINISHED);
             String pdfInfo = toolResponseMessage.getResponses().stream()
@@ -180,17 +196,20 @@ public class ToolCallAgent extends ReActAgent {
                 answer.append(generateFinalAnswer());
             }
             if (pdfInfo != null && !pdfInfo.isBlank() && answer.indexOf(pdfInfo) < 0) {
+                //拼接 PDF 绝对路径说明
                 answer.append(formatPdfSection(pdfInfo));
             }
             return answer.toString();
         }
 
+        //如果需要pdf
         if (pdfGenerated && pdfRequested) {
             String pdfPath = toolResponseMessage.getResponses().stream()
                     .filter(r -> "generatePDF".equals(r.name()))
                     .map(ToolResponseMessage.ToolResponse::responseData)
                     .findFirst()
                     .orElse("");
+            //总结下一步的提示词，最终输出答案
             lastStepAnswer = generateFinalAnswer() + formatPdfSection(pdfPath);
             setAgentState(AgentState.FINISHED);
             return lastStepAnswer;
@@ -265,7 +284,10 @@ public class ToolCallAgent extends ReActAgent {
         if (toolCalls.isEmpty()) {
             return;
         }
+
+        //给工具调用生成指纹：`"searchWeb:{query参数}
         String sig = buildToolSignature(toolCalls);
+
         if (sig.equals(lastToolSignature)) {
             sameToolRepeatCount++;
         } else {
@@ -296,6 +318,7 @@ public class ToolCallAgent extends ReActAgent {
         if (toolCalls.isEmpty()) {
             return false;
         }
+        //当前工具签名和上次一样 → 计数+1；不一样 → 重置为 1
         updateRepeatCounter(toolCalls);
 
         if (isRepeatedSearchOnly(toolCalls) && searchWebCount >= 1) {
@@ -325,6 +348,7 @@ public class ToolCallAgent extends ReActAgent {
         PDFGenerationTool pdfTool = new PDFGenerationTool();
         String pdfResult = pdfTool.generatePDF(fileName, summary);
         pdfGenerated = true;
+        //拼接 PDF 绝对路径说明
         return summary + formatPdfSection(pdfResult);
     }
 
@@ -412,6 +436,7 @@ public class ToolCallAgent extends ReActAgent {
                 "请提供", "请补充", "还不清楚", "还没想好", "为了给您", "为了给你",
                 "我需要知道", "麻烦您", "麻烦你", "想确认");
         boolean hasNumberedQuestions = assistantText.matches("(?s).*\\d+[.、．][^\\n]{0,80}[？?].*");
+        //检测用户消息中是否有 "还没想好""不确定""待定" 等词
         boolean userMissingInfo = userIndicatesMissingInfo();
 
         if (questionMarks >= 2) {
@@ -445,6 +470,7 @@ public class ToolCallAgent extends ReActAgent {
     private AskHumanRequest buildAskHumanFromAssistantText(String assistantText) {
         AskHumanRequest request = new AskHumanRequest();
         request.setToolCallId("fallback-ask-" + System.currentTimeMillis());
+        //从 LLM 文本中提取第一行作为问题
         request.setQuestion(extractQuestionFromAssistantText(assistantText));
         request.setReason("需要您补充信息后才能继续完成任务");
         return request;
@@ -559,6 +585,7 @@ public class ToolCallAgent extends ReActAgent {
      * @return
      */
     private String buildPdfFileName() {
+        //根据对话内容生成 PDF 关键词
         String path = buildPdfAbsolutePath();
         return new java.io.File(path).getName();
     }
@@ -590,6 +617,7 @@ public class ToolCallAgent extends ReActAgent {
                     .chatResponse();
 
             String keyword = response.getResult().getOutput().getText();
+            //清洗关键词
             keyword = sanitizePdfKeyword(keyword);
             log.info("对话生成 PDF 关键词: {}", keyword);
             return keyword;
@@ -601,6 +629,7 @@ public class ToolCallAgent extends ReActAgent {
 
     /** 拼接 PDF 绝对路径说明（仅磁盘路径，不用 /api 相对地址） */
     private String formatPdfSection(String pathOrToolOutput) {
+        //从工具返回的文本中提取绝对路径
         String path = extractAbsolutePath(pathOrToolOutput);
         if (path == null || path.isBlank()) {
             return "";

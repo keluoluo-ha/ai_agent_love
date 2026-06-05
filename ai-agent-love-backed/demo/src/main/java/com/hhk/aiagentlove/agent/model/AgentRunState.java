@@ -8,6 +8,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Data
+/**
+ *  暂停/恢复快照
+ */
 public class AgentRunState {
 
     private String runId;
